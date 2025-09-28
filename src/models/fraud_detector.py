@@ -7,17 +7,38 @@ from sklearn.model_selection import cross_val_score
 import joblib
 import logging
 from typing import Tuple, Dict, Any
+import sys
+import os
+
+# Add parent directory to path for imports
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+
+try:
+    from mlflow_integration.experiment_tracker import MLflowExperimentTracker
+except ImportError:
+    MLflowExperimentTracker = None
+    logging.warning("MLflow integration not available")
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class FraudDetector:
-    def __init__(self, model_type='random_forest'):
+    def __init__(self, model_type='random_forest', use_mlflow=True):
         self.model_type = model_type
         self.model = None
         self.anomaly_detector = None
         self.is_trained = False
         self.feature_importance = None
+        self.use_mlflow = use_mlflow and MLflowExperimentTracker is not None
+        self.mlflow_tracker = None
+
+        if self.use_mlflow:
+            try:
+                self.mlflow_tracker = MLflowExperimentTracker()
+                logger.info("MLflow tracking enabled")
+            except Exception as e:
+                logger.warning(f"MLflow initialization failed: {str(e)}")
+                self.use_mlflow = False
 
     def _initialize_model(self):
         if self.model_type == 'random_forest':
@@ -44,7 +65,7 @@ class FraudDetector:
             random_state=42
         )
 
-    def train(self, X_train: pd.DataFrame, y_train: pd.Series) -> Dict[str, Any]:
+    def train(self, X_train: pd.DataFrame, y_train: pd.Series, X_test: pd.DataFrame = None, y_test: pd.Series = None) -> Dict[str, Any]:
         self._initialize_model()
 
         logger.info(f"Training {self.model_type} model...")
@@ -76,6 +97,30 @@ class FraudDetector:
             'n_samples': X_train.shape[0],
             'fraud_rate': y_train.mean()
         }
+
+        # MLflow tracking
+        if self.use_mlflow and self.mlflow_tracker and X_test is not None and y_test is not None:
+            try:
+                # Get evaluation results
+                evaluation_results = self.evaluate(X_test, y_test)
+
+                # Log complete training session
+                self.mlflow_run_id = self.mlflow_tracker.log_training_session(
+                    model=self.model,
+                    X_train=X_train,
+                    y_train=y_train,
+                    X_test=X_test,
+                    y_test=y_test,
+                    training_params=training_results,
+                    evaluation_results=evaluation_results,
+                    feature_importance=self.feature_importance
+                )
+
+                if self.mlflow_run_id:
+                    training_results['mlflow_run_id'] = self.mlflow_run_id
+
+            except Exception as e:
+                logger.warning(f"MLflow logging failed: {str(e)}")
 
         logger.info(f"Training completed. CV AUC: {cv_scores.mean():.3f} ± {cv_scores.std():.3f}")
 

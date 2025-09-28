@@ -1,84 +1,144 @@
-# Fraud Detection System
+# 🛡️ FraudGuard - Enterprise ML Fraud Detection Platform
 
-Un système de détection de fraude utilisant l'apprentissage automatique pour identifier les transactions frauduleuses.
+FraudGuard est une plateforme complète de détection de fraude bancaire utilisant une stack open-source moderne avec MLflow, Airflow, Kubernetes, et un pipeline CI/CD GitLab.
 
-## Fonctionnalités
+## 🎯 Vue d'ensemble
 
-- **Détection de fraude en temps réel** : Classification des transactions comme frauduleuses ou légitimes
-- **Détection d'anomalies** : Identification de patterns anormaux dans les transactions
-- **API REST** : Interface pour intégrer le système dans d'autres applications
-- **Feature Engineering** : Création automatique de features à partir des données de transaction
-- **Modèles multiples** : Support pour Random Forest et Régression Logistique
+FraudGuard combine l'apprentissage automatique avancé avec une infrastructure cloud-native pour détecter les fraudes en temps réel à l'échelle enterprise.
 
-## Installation
+### 🔧 Stack Technique
 
-### Prérequis
-- Python 3.8+
-- pip
+| Composant | Technologie | Usage |
+|-----------|------------|-------|
+| **API** | FastAPI + Pydantic | API REST haute performance |
+| **ML Tracking** | MLflow | Suivi d'expériences et registry de modèles |
+| **Orchestration** | Apache Airflow | Pipelines ML automatisés |
+| **Déploiement** | Kubernetes + Harbor | Scaling et gestion des containers |
+| **CI/CD** | GitLab CI/CD | Intégration et déploiement continus |
+| **Monitoring** | Prometheus + Grafana | Observabilité et alertes |
+| **Stockage** | PostgreSQL + Redis | Base de données et cache |
 
-### Configuration de l'environnement
+## ✨ Fonctionnalités Enterprise
+
+### 🚀 Détection de Fraude
+- **Temps réel** : Prédictions < 100ms avec scaling automatique
+- **Multi-modèles** : Random Forest + Isolation Forest pour détection d'anomalies
+- **Feature Engineering** : +20 features automatiques (temporelles, comportementales, vélocité)
+- **Validation avancée** : Pydantic pour validation des données d'entrée
+
+### 🔄 MLOps Pipeline
+- **Entraînement automatisé** : DAGs Airflow pour pipeline ML complet
+- **Model Registry** : Versioning et déploiement via MLflow
+- **A/B Testing** : Comparaison de modèles en production
+- **Monitoring drift** : Détection automatique de dérive des modèles
+
+### 🏗️ Infrastructure Cloud-Native
+- **Auto-scaling** : HPA Kubernetes basé sur CPU/mémoire/trafic
+- **Haute disponibilité** : Multi-réplicas avec load balancing
+- **Zero-downtime** : Rolling deployments avec health checks
+- **Observabilité** : Métriques business + infrastructure via Prometheus
+
+### 🔒 Sécurité & Compliance
+- **Network policies** : Isolation réseau Kubernetes
+- **Security scanning** : Trivy + Bandit dans pipeline CI/CD
+- **Secrets management** : Intégration avec vaults externes
+- **Audit logs** : Traçabilité complète des prédictions
+
+## 🚀 Déploiement
+
+### Prérequis Infrastructure
+- **Kubernetes** 1.20+ avec Helm 3
+- **Docker** + Harbor Registry
+- **GitLab** avec runners configurés
+- **Domaines** configurés avec SSL
+
+### 🐳 Déploiement Local (Développement)
 
 ```bash
 # Cloner le repository
-git clone <repository-url>
+git clone https://github.com/RomainGJ/Fraud.git
 cd fraud_detection
 
-# Créer et activer l'environnement virtuel
-python3 -m venv fraud_detection_env
-source fraud_detection_env/bin/activate  # Linux/Mac
-# ou
-fraud_detection_env\Scripts\activate  # Windows
+# Lancer la stack complète avec Docker Compose
+docker-compose -f docker/docker-compose.yml up -d
 
-# Installer les dépendances
-pip install -r requirements.txt
+# Accès aux services
+# API FraudGuard: http://localhost:8000
+# MLflow: http://localhost:5000
+# Airflow: http://localhost:8080 (admin/admin)
+# Grafana: http://localhost:3000 (admin/admin)
+# Prometheus: http://localhost:9090
 ```
 
-## Usage
-
-### Entraînement du modèle
+### ☸️ Déploiement Production (Kubernetes)
 
 ```bash
-# Entraîner avec des données synthétiques
-python main.py --train
+# 1. Configuration du namespace
+kubectl apply -f k8s/namespace.yaml
 
-# Entraîner avec vos propres données
-python main.py --train --data path/to/your/data.csv
+# 2. Déploiement de l'API
+kubectl apply -f k8s/fraudguard-api-deployment.yaml
 
-# Choisir le type de modèle
-python main.py --train --model-type logistic_regression
+# 3. Configuration de l'auto-scaling
+kubectl apply -f k8s/hpa.yaml
+
+# 4. Exposition via Ingress
+kubectl apply -f k8s/ingress.yaml
+
+# 5. Monitoring
+kubectl apply -f monitoring/
 ```
 
-### Prédiction
+### 📊 Configuration MLflow + Airflow
 
 ```bash
-# Faire une prédiction sur des données d'exemple
+# Variables d'environnement requises
+export MLFLOW_TRACKING_URI=http://mlflow:5000
+export AIRFLOW__CORE__EXECUTOR=CeleryExecutor
+export AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres:5432/airflow
+
+# Initialisation Airflow
+airflow db init
+airflow users create --username admin --firstname Admin --lastname User --role Admin --email admin@fraudguard.com --password admin
+```
+
+## 💻 Utilisation
+
+### 🔧 Interface de Ligne de Commande
+
+```bash
+# Entraînement avec MLflow tracking
+python main.py --train --model-type random_forest
+
+# Test de l'API locale
+python main.py --api
+
+# Prédiction simple
 python main.py --predict
 ```
 
-### API Server
+### 🌐 API REST FastAPI
+
+L'API FraudGuard expose plusieurs endpoints haute performance :
+
+| Endpoint | Méthode | Description |
+|----------|---------|-------------|
+| `/health` | GET | Status de l'API et du modèle |
+| `/api/v1/predict` | POST | Prédiction transaction unique |
+| `/api/v1/predict/batch` | POST | Prédictions en lot |
+| `/api/v1/model/info` | GET | Informations du modèle |
+| `/api/v1/model/reload` | POST | Recharger le modèle |
+| `/metrics` | GET | Métriques Prometheus |
+
+#### 📝 Exemple d'Utilisation
 
 ```bash
-# Démarrer le serveur API
-python main.py --api
-```
-
-L'API sera accessible sur `http://localhost:5000`
-
-#### Endpoints API
-
-- `GET /health` - Vérifier l'état de l'API
-- `POST /predict` - Prédire une seule transaction
-- `POST /predict/batch` - Prédire plusieurs transactions
-- `GET /model/info` - Informations sur le modèle
-- `GET /model/features` - Importance des features
-
-#### Exemple de requête
-
-```bash
-curl -X POST http://localhost:5000/predict \
+# Prédiction unique
+curl -X POST https://api.fraudguard.company.com/api/v1/predict \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
   -d '{
-    "transaction_amount": 850.0,
+    "transaction_amount": 1250.0,
     "account_age_days": 15,
     "merchant_category": "online",
     "time_of_day": 23,
@@ -86,36 +146,103 @@ curl -X POST http://localhost:5000/predict \
     "transaction_count_last_hour": 3,
     "average_transaction_amount": 120.0,
     "location_risk_score": 0.8,
-    "payment_method": "credit"
+    "payment_method": "credit",
+    "transaction_id": "txn_12345"
   }'
+
+# Réponse
+{
+  "transaction_id": "txn_12345",
+  "is_fraud": true,
+  "fraud_probability": 0.87,
+  "is_anomaly": true,
+  "risk_level": "HIGH",
+  "confidence": 0.87,
+  "prediction_time": "2024-01-15T10:30:00Z",
+  "model_version": "v2.1.0"
+}
 ```
 
-## Structure du projet
+### 🔄 Pipeline MLOps via Airflow
+
+```bash
+# Accéder à Airflow UI
+open http://localhost:8080
+
+# Déclencher manuellement le pipeline d'entraînement
+airflow dags trigger fraud_detection_training_pipeline
+
+# Voir les logs d'exécution
+airflow logs fraud_detection_training_pipeline process_data 2024-01-15
+```
+
+### 📊 Monitoring et Observabilité
+
+```bash
+# Dashboard Grafana
+open https://monitoring.fraudguard.company.com/grafana
+
+# Métriques Prometheus
+open https://monitoring.fraudguard.company.com/prometheus
+
+# MLflow Experiments
+open https://mlflow.fraudguard.company.com
+```
+
+## 📁 Architecture du Projet
 
 ```
-fraud_detection/
-├── src/
-│   ├── data_processing/
-│   │   ├── __init__.py
-│   │   └── preprocessor.py
-│   ├── models/
-│   │   ├── __init__.py
-│   │   └── fraud_detector.py
-│   ├── features/
-│   │   ├── __init__.py
-│   │   └── feature_engineering.py
-│   ├── api/
-│   │   ├── __init__.py
-│   │   └── app.py
-│   └── utils/
-├── tests/
-├── data/
-├── models/
-├── notebooks/
-├── config/
-├── main.py
-├── requirements.txt
-└── README.md
+fraudguard/
+├── 🚀 src/                          # Code source principal
+│   ├── api/                         # FastAPI application
+│   │   ├── fastapi_app.py          # Application principale
+│   │   └── __init__.py
+│   ├── models/                      # Modèles ML
+│   │   ├── fraud_detector.py       # Détecteur principal
+│   │   └── __init__.py
+│   ├── data_processing/             # Préprocessing des données
+│   │   ├── preprocessor.py         # Pipeline de préparation
+│   │   └── __init__.py
+│   ├── features/                    # Feature engineering
+│   │   ├── feature_engineering.py  # Création de features
+│   │   └── __init__.py
+│   └── mlflow_integration/          # Intégration MLflow
+│       ├── experiment_tracker.py   # Tracking d'expériences
+│       └── __init__.py
+├── 🐳 docker/                       # Configuration Docker
+│   ├── docker-compose.yml          # Stack complète de développement
+│   └── Dockerfile.airflow          # Image Airflow personnalisée
+├── ☸️ k8s/                          # Manifestes Kubernetes
+│   ├── fraudguard-api-deployment.yaml  # Déploiement API
+│   ├── hpa.yaml                    # Auto-scaling horizontal
+│   ├── ingress.yaml                # Exposition externe
+│   └── namespace.yaml              # Namespace isolé
+├── 🔄 airflow/                      # Orchestration ML
+│   ├── dags/                       # DAGs Airflow
+│   │   ├── fraud_detection_pipeline.py     # Pipeline entraînement
+│   │   └── fraud_detection_inference.py   # Pipeline inference
+│   └── config/
+│       └── airflow.cfg             # Configuration Airflow
+├── 📊 monitoring/                   # Observabilité
+│   ├── prometheus.yml              # Config monitoring
+│   ├── fraud_detection_rules.yml   # Règles métier
+│   ├── alerting_rules.yml          # Règles d'alerte
+│   ├── alertmanager.yml            # Gestion des alertes
+│   └── grafana/
+│       └── fraudguard-dashboard.json   # Dashboard principal
+├── 🔧 CI/CD
+│   └── .gitlab-ci.yml              # Pipeline GitLab complet
+├── 📋 Configuration
+│   ├── requirements.txt            # Dépendances Python
+│   ├── Dockerfile                  # Image de production
+│   ├── .gitignore                 # Exclusions Git
+│   └── README.md                  # Documentation
+└── 🎯 Scripts
+    ├── main.py                     # Point d'entrée principal
+    └── tests/                      # Tests automatisés
+        ├── unit/                   # Tests unitaires
+        ├── integration/            # Tests d'intégration
+        └── e2e/                    # Tests end-to-end
 ```
 
 ## Features utilisées

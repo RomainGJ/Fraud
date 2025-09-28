@@ -1,0 +1,328 @@
+stages:
+  - validate
+  - test
+  - security
+  - build
+  - deploy-staging
+  - integration-tests
+  - deploy-production
+  - monitoring
+
+variables:
+  DOCKER_DRIVER: overlay2
+  DOCKER_TLS_CERTDIR: "/certs"
+  HARBOR_REGISTRY: "harbor.company.com"
+  PROJECT_NAME: "fraudguard"
+  KUBE_NAMESPACE_STAGING: "fraudguard-staging"
+  KUBE_NAMESPACE_PROD: "fraudguard-production"
+
+# Template for Docker operations
+.docker-template: &docker-template
+  image: docker:20.10.16
+  services:
+    - docker:20.10.16-dind
+  before_script:
+    - echo $HARBOR_PASSWORD | docker login $HARBOR_REGISTRY -u $HARBOR_USERNAME --password-stdin
+
+# Template for Kubernetes operations
+.kubernetes-template: &kubernetes-template
+  image: bitnami/kubectl:latest
+  before_script:
+    - kubectl config use-context $KUBE_CONTEXT
+
+# Code Quality and Validation
+code-quality:
+  stage: validate
+  image: python:3.9-slim
+  before_script:
+    - pip install black flake8 mypy bandit safety
+  script:
+    - black --check src/ tests/
+    - flake8 src/ tests/
+    - mypy src/
+    - bandit -r src/ -f json -o bandit-report.json
+    - safety check --json --output safety-report.json
+  artifacts:
+    reports:
+      codequality: bandit-report.json
+    paths:
+      - bandit-report.json
+      - safety-report.json
+    expire_in: 1 week
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+# Unit Tests
+unit-tests:
+  stage: test
+  image: python:3.9-slim
+  services:
+    - name: postgres:14
+      alias: postgres
+      variables:
+        POSTGRES_DB: test_db
+        POSTGRES_USER: test_user
+        POSTGRES_PASSWORD: test_pass
+    - name: redis:7-alpine
+      alias: redis
+  variables:
+    DATABASE_URL: "postgresql://test_user:test_pass@postgres:5432/test_db"
+    REDIS_URL: "redis://redis:6379/0"
+  before_script:
+    - pip install --upgrade pip
+    - pip install -r requirements.txt
+    - pip install pytest-cov pytest-xdist
+  script:
+    - pytest tests/ -v --cov=src --cov-report=xml --cov-report=html --junitxml=report.xml
+  coverage: '/(?i)total.*? (100(?:\.0+)?\%|[1-9]?\d(?:\.\d+)?\%)$/'
+  artifacts:
+    reports:
+      junit: report.xml
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage.xml
+    paths:
+      - htmlcov/
+      - coverage.xml
+    expire_in: 1 week
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+# Integration Tests
+integration-tests:
+  stage: test
+  image: python:3.9-slim
+  services:
+    - name: postgres:14
+      alias: postgres
+      variables:
+        POSTGRES_DB: integration_db
+        POSTGRES_USER: int_user
+        POSTGRES_PASSWORD: int_pass
+    - name: redis:7-alpine
+      alias: redis
+  variables:
+    DATABASE_URL: "postgresql://int_user:int_pass@postgres:5432/integration_db"
+    REDIS_URL: "redis://redis:6379/0"
+  before_script:
+    - pip install --upgrade pip
+    - pip install -r requirements.txt
+    - pip install pytest-xdist
+  script:
+    - pytest tests/integration/ -v --junitxml=integration-report.xml
+  artifacts:
+    reports:
+      junit: integration-report.xml
+    expire_in: 1 week
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+# Security Scanning
+security-scan:
+  stage: security
+  image: python:3.9-slim
+  before_script:
+    - pip install safety bandit semgrep
+  script:
+    - safety check --json --output safety-detailed.json
+    - bandit -r src/ -f json -o bandit-detailed.json
+    - semgrep --config=auto src/ --json --output=semgrep-report.json
+  artifacts:
+    reports:
+      sast: bandit-detailed.json
+    paths:
+      - safety-detailed.json
+      - bandit-detailed.json
+      - semgrep-report.json
+    expire_in: 1 week
+  allow_failure: true
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+# Container Security Scanning
+container-scan:
+  stage: security
+  <<: *docker-template
+  script:
+    - docker build -t $PROJECT_NAME:$CI_COMMIT_SHA .
+    - docker run --rm -v /var/run/docker.sock:/var/run/docker.sock
+        -v $PWD:/tmp/.cache/ aquasec/trivy:latest image
+        --format template --template "@contrib/sarif.tpl"
+        -o /tmp/.cache/trivy-report.sarif $PROJECT_NAME:$CI_COMMIT_SHA
+  artifacts:
+    reports:
+      sast: trivy-report.sarif
+    expire_in: 1 week
+  allow_failure: true
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+# Build Docker Images
+build-api:
+  stage: build
+  <<: *docker-template
+  script:
+    - docker build -t $HARBOR_REGISTRY/$PROJECT_NAME/api:$CI_COMMIT_SHA .
+    - docker build -t $HARBOR_REGISTRY/$PROJECT_NAME/api:latest .
+    - docker push $HARBOR_REGISTRY/$PROJECT_NAME/api:$CI_COMMIT_SHA
+    - docker push $HARBOR_REGISTRY/$PROJECT_NAME/api:latest
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+build-airflow:
+  stage: build
+  <<: *docker-template
+  script:
+    - docker build -f docker/Dockerfile.airflow -t $HARBOR_REGISTRY/$PROJECT_NAME/airflow:$CI_COMMIT_SHA .
+    - docker build -f docker/Dockerfile.airflow -t $HARBOR_REGISTRY/$PROJECT_NAME/airflow:latest .
+    - docker push $HARBOR_REGISTRY/$PROJECT_NAME/airflow:$CI_COMMIT_SHA
+    - docker push $HARBOR_REGISTRY/$PROJECT_NAME/airflow:latest
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+# Deploy to Staging
+deploy-staging:
+  stage: deploy-staging
+  <<: *kubernetes-template
+  environment:
+    name: staging
+    url: https://api-staging.fraudguard.company.com
+  script:
+    - kubectl config use-context $KUBE_CONTEXT_STAGING
+    - |
+      cat k8s/fraudguard-api-deployment.yaml | \
+      sed "s|harbor.company.com/fraudguard/api:latest|$HARBOR_REGISTRY/$PROJECT_NAME/api:$CI_COMMIT_SHA|g" | \
+      sed "s|namespace: fraudguard|namespace: $KUBE_NAMESPACE_STAGING|g" | \
+      kubectl apply -f -
+    - kubectl apply -f k8s/namespace.yaml
+    - kubectl apply -f k8s/hpa.yaml -n $KUBE_NAMESPACE_STAGING
+    - kubectl rollout status deployment/fraudguard-api -n $KUBE_NAMESPACE_STAGING --timeout=300s
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+# End-to-End Tests in Staging
+e2e-tests:
+  stage: integration-tests
+  image: python:3.9-slim
+  variables:
+    API_URL: "https://api-staging.fraudguard.company.com"
+  before_script:
+    - pip install requests pytest
+  script:
+    - python tests/e2e/test_api_endpoints.py
+    - python tests/e2e/test_model_performance.py
+  artifacts:
+    reports:
+      junit: e2e-report.xml
+    expire_in: 1 week
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+# Load Testing
+load-tests:
+  stage: integration-tests
+  image: loadimpact/k6:latest
+  variables:
+    API_URL: "https://api-staging.fraudguard.company.com"
+  script:
+    - k6 run --out json=load-test-results.json tests/load/api_load_test.js
+  artifacts:
+    paths:
+      - load-test-results.json
+    expire_in: 1 week
+  allow_failure: true
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+# Manual Deploy to Production
+deploy-production:
+  stage: deploy-production
+  <<: *kubernetes-template
+  environment:
+    name: production
+    url: https://api.fraudguard.company.com
+  script:
+    - kubectl config use-context $KUBE_CONTEXT_PROD
+    - |
+      cat k8s/fraudguard-api-deployment.yaml | \
+      sed "s|harbor.company.com/fraudguard/api:latest|$HARBOR_REGISTRY/$PROJECT_NAME/api:$CI_COMMIT_SHA|g" | \
+      sed "s|namespace: fraudguard|namespace: $KUBE_NAMESPACE_PROD|g" | \
+      sed "s|replicas: 3|replicas: 10|g" | \
+      kubectl apply -f -
+    - kubectl apply -f k8s/namespace.yaml
+    - kubectl apply -f k8s/hpa.yaml -n $KUBE_NAMESPACE_PROD
+    - kubectl apply -f k8s/ingress.yaml -n $KUBE_NAMESPACE_PROD
+    - kubectl rollout status deployment/fraudguard-api -n $KUBE_NAMESPACE_PROD --timeout=600s
+  when: manual
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+# Post-deployment Monitoring Setup
+setup-monitoring:
+  stage: monitoring
+  <<: *kubernetes-template
+  script:
+    - kubectl apply -f k8s/monitoring/ -n $KUBE_NAMESPACE_PROD
+    - |
+      echo "Monitoring setup completed. Dashboards available at:"
+      echo "Grafana: https://monitoring.fraudguard.company.com/grafana"
+      echo "Prometheus: https://monitoring.fraudguard.company.com/prometheus"
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: manual
+
+# Rollback mechanism
+rollback-production:
+  stage: deploy-production
+  <<: *kubernetes-template
+  environment:
+    name: production
+    url: https://api.fraudguard.company.com
+  script:
+    - kubectl rollout undo deployment/fraudguard-api -n $KUBE_NAMESPACE_PROD
+    - kubectl rollout status deployment/fraudguard-api -n $KUBE_NAMESPACE_PROD --timeout=300s
+  when: manual
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+# Performance Monitoring Job
+monitor-performance:
+  stage: monitoring
+  image: python:3.9-slim
+  before_script:
+    - pip install requests prometheus-client
+  script:
+    - python scripts/performance_monitor.py --url https://api.fraudguard.company.com
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+
+# Model Drift Detection
+detect-model-drift:
+  stage: monitoring
+  image: python:3.9-slim
+  variables:
+    MLFLOW_TRACKING_URI: "https://mlflow.fraudguard.company.com"
+  before_script:
+    - pip install mlflow pandas scikit-learn
+  script:
+    - python scripts/model_drift_detection.py
+  artifacts:
+    paths:
+      - drift-report.json
+    expire_in: 1 month
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+
+# Clean up old artifacts
+cleanup:
+  stage: monitoring
+  <<: *docker-template
+  script:
+    - docker system prune -f
+    - kubectl delete pods --field-selector=status.phase==Succeeded -n $KUBE_NAMESPACE_PROD
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"

@@ -1,0 +1,132 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fraudguard-api
+  namespace: fraudguard
+  labels:
+    app: fraudguard-api
+    component: api
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: fraudguard-api
+  template:
+    metadata:
+      labels:
+        app: fraudguard-api
+        component: api
+    spec:
+      containers:
+      - name: fraudguard-api
+        image: harbor.company.com/fraudguard/api:latest
+        ports:
+        - containerPort: 8000
+          name: http
+        env:
+        - name: MLFLOW_TRACKING_URI
+          value: "http://mlflow-service:5000"
+        - name: PROMETHEUS_GATEWAY
+          value: "http://prometheus:9090"
+        - name: ENVIRONMENT
+          value: "production"
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        volumeMounts:
+        - name: model-storage
+          mountPath: /app/models
+          readOnly: true
+        - name: config-volume
+          mountPath: /app/config
+          readOnly: true
+      volumes:
+      - name: model-storage
+        persistentVolumeClaim:
+          claimName: fraudguard-model-pvc
+      - name: config-volume
+        configMap:
+          name: fraudguard-config
+      imagePullSecrets:
+      - name: harbor-registry-secret
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fraudguard-api-service
+  namespace: fraudguard
+  labels:
+    app: fraudguard-api
+spec:
+  selector:
+    app: fraudguard-api
+  ports:
+  - port: 80
+    targetPort: 8000
+    protocol: TCP
+    name: http
+  type: ClusterIP
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fraudguard-config
+  namespace: fraudguard
+data:
+  app_config.yaml: |
+    mlflow:
+      tracking_uri: "http://mlflow-service:5000"
+      experiment_name: "fraud-detection"
+
+    api:
+      title: "FraudGuard API"
+      version: "2.0.0"
+      debug: false
+
+    model:
+      min_confidence_threshold: 0.7
+      anomaly_detection_enabled: true
+
+    monitoring:
+      prometheus_enabled: true
+      metrics_port: 8000
+
+    logging:
+      level: "INFO"
+      format: "json"
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: fraudguard-model-pvc
+  namespace: fraudguard
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 10Gi
+  storageClassName: fast-ssd

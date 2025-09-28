@@ -1,0 +1,127 @@
+global:
+  smtp_smarthost: 'localhost:587'
+  smtp_from: 'alerts@fraudguard.company.com'
+  smtp_auth_username: 'alerts@fraudguard.company.com'
+  smtp_auth_password: 'your_smtp_password'
+
+templates:
+- '/etc/alertmanager/templates/*.tmpl'
+
+route:
+  group_by: ['alertname', 'cluster', 'service']
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 12h
+  receiver: 'fraud-detection-team'
+  routes:
+  - match:
+      severity: critical
+    receiver: 'fraud-detection-critical'
+    group_wait: 10s
+    repeat_interval: 1h
+  - match:
+      alertname: HighFraudRate
+    receiver: 'fraud-business-team'
+    group_wait: 5s
+    repeat_interval: 30m
+  - match:
+      alertname: ModelDrift
+    receiver: 'ml-engineering-team'
+    group_wait: 1m
+    repeat_interval: 6h
+
+receivers:
+- name: 'fraud-detection-team'
+  email_configs:
+  - to: 'fraud-team@company.com'
+    subject: '[FraudGuard] {{ .GroupLabels.alertname }}'
+    body: |
+      {{ range .Alerts }}
+      Alert: {{ .Annotations.summary }}
+      Description: {{ .Annotations.description }}
+      Severity: {{ .Labels.severity }}
+      Instance: {{ .Labels.instance }}
+      {{ end }}
+  slack_configs:
+  - api_url: 'https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK'
+    channel: '#fraud-detection-alerts'
+    title: 'FraudGuard Alert'
+    text: |
+      {{ range .Alerts }}
+      Alert: {{ .Annotations.summary }}
+      {{ end }}
+
+- name: 'fraud-detection-critical'
+  email_configs:
+  - to: 'fraud-team@company.com,management@company.com'
+    subject: '[CRITICAL] FraudGuard System Alert'
+    body: |
+      CRITICAL ALERT - Immediate Action Required
+
+      {{ range .Alerts }}
+      Alert: {{ .Annotations.summary }}
+      Description: {{ .Annotations.description }}
+      Runbook: {{ .Annotations.runbook_url }}
+      Dashboard: {{ .Annotations.dashboard_url }}
+      {{ end }}
+  slack_configs:
+  - api_url: 'https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK'
+    channel: '#fraud-detection-critical'
+    title: '🚨 CRITICAL: FraudGuard Alert'
+    text: |
+      <!channel> Critical alert requiring immediate attention
+      {{ range .Alerts }}
+      Alert: {{ .Annotations.summary }}
+      {{ end }}
+  pagerduty_configs:
+  - routing_key: 'your_pagerduty_integration_key'
+    description: |
+      {{ range .Alerts }}
+      {{ .Annotations.summary }}
+      {{ end }}
+
+- name: 'fraud-business-team'
+  email_configs:
+  - to: 'business-intelligence@company.com,fraud-analysts@company.com'
+    subject: '[FraudGuard] Business Metric Alert'
+    body: |
+      Business Metric Alert from FraudGuard
+
+      {{ range .Alerts }}
+      Alert: {{ .Annotations.summary }}
+      Description: {{ .Annotations.description }}
+      Current Value: {{ .Annotations.current_value }}
+      Threshold: {{ .Annotations.threshold }}
+      {{ end }}
+
+- name: 'ml-engineering-team'
+  email_configs:
+  - to: 'ml-engineers@company.com'
+    subject: '[FraudGuard] ML Model Alert'
+    body: |
+      ML Model Alert from FraudGuard
+
+      {{ range .Alerts }}
+      Alert: {{ .Annotations.summary }}
+      Description: {{ .Annotations.description }}
+      Model Version: {{ .Labels.model_version }}
+      Drift Score: {{ .Annotations.drift_score }}
+      Recommended Action: {{ .Annotations.recommended_action }}
+      {{ end }}
+  slack_configs:
+  - api_url: 'https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK'
+    channel: '#ml-engineering'
+    title: 'FraudGuard ML Alert'
+
+inhibit_rules:
+- source_match:
+    severity: 'critical'
+  target_match:
+    severity: 'warning'
+  equal: ['alertname', 'instance']
+
+- source_match:
+    alertname: 'SystemDown'
+  target_match_re:
+    alertname: '(HighLatency|HighErrorRate)'
+  equal: ['instance']

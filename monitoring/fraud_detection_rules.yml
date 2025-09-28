@@ -1,0 +1,143 @@
+groups:
+  - name: fraudguard.ml.rules
+    rules:
+      # Model Performance Rules
+      - record: fraudguard:model_accuracy_rate
+        expr: |
+          (
+            increase(fraud_predictions_total{outcome="fraud"}[5m]) +
+            increase(fraud_predictions_total{outcome="legitimate"}[5m])
+          ) /
+          increase(fraud_predictions_total[5m]) * 100
+
+      - record: fraudguard:fraud_detection_rate
+        expr: |
+          increase(fraud_predictions_total{outcome="fraud"}[5m]) /
+          increase(fraud_predictions_total[5m]) * 100
+
+      - record: fraudguard:prediction_latency_p95
+        expr: |
+          histogram_quantile(0.95,
+            rate(fraud_prediction_duration_seconds_bucket[5m])
+          ) * 1000
+
+      - record: fraudguard:prediction_latency_p99
+        expr: |
+          histogram_quantile(0.99,
+            rate(fraud_prediction_duration_seconds_bucket[5m])
+          ) * 1000
+
+      # API Performance Rules
+      - record: fraudguard:api_request_rate
+        expr: |
+          rate(api_requests_total[5m])
+
+      - record: fraudguard:api_error_rate
+        expr: |
+          rate(api_requests_total{code!~"2.*"}[5m]) /
+          rate(api_requests_total[5m]) * 100
+
+      - record: fraudguard:api_availability
+        expr: |
+          (
+            rate(api_requests_total{code=~"2.*"}[5m]) /
+            rate(api_requests_total[5m])
+          ) * 100
+
+      # Resource Usage Rules
+      - record: fraudguard:cpu_usage_percent
+        expr: |
+          (
+            1 - rate(container_cpu_usage_seconds_total{container="fraudguard-api"}[5m])
+          ) * 100
+
+      - record: fraudguard:memory_usage_percent
+        expr: |
+          (
+            container_memory_working_set_bytes{container="fraudguard-api"} /
+            container_spec_memory_limit_bytes{container="fraudguard-api"}
+          ) * 100
+
+      # Business Logic Rules
+      - record: fraudguard:hourly_fraud_rate
+        expr: |
+          increase(fraud_predictions_total{outcome="fraud"}[1h]) /
+          increase(fraud_predictions_total[1h]) * 100
+
+      - record: fraudguard:daily_transaction_volume
+        expr: |
+          increase(fraud_predictions_total[24h])
+
+      - record: fraudguard:model_confidence_avg
+        expr: |
+          avg(fraud_prediction_confidence)
+
+  - name: fraudguard.sli.rules
+    rules:
+      # Service Level Indicators (SLIs)
+      - record: fraudguard:sli_availability
+        expr: |
+          (
+            sum(rate(api_requests_total{code=~"2.*"}[5m])) /
+            sum(rate(api_requests_total[5m]))
+          ) * 100
+
+      - record: fraudguard:sli_latency
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(fraud_prediction_duration_seconds_bucket[5m])) by (le)
+          ) * 1000
+
+      - record: fraudguard:sli_error_budget
+        expr: |
+          100 - (
+            sum(rate(api_requests_total{code!~"2.*"}[5m])) /
+            sum(rate(api_requests_total[5m])) * 100
+          )
+
+      - record: fraudguard:sli_throughput
+        expr: |
+          sum(rate(api_requests_total[5m]))
+
+  - name: fraudguard.data.rules
+    rules:
+      # Data Quality Rules
+      - record: fraudguard:data_freshness_minutes
+        expr: |
+          (time() - airflow_dag_run_start_date{dag_id="fraud_detection_training_pipeline"}) / 60
+
+      - record: fraudguard:model_age_hours
+        expr: |
+          (time() - mlflow_model_last_updated) / 3600
+
+      - record: fraudguard:prediction_volume_anomaly
+        expr: |
+          abs(
+            rate(fraud_predictions_total[5m]) -
+            avg_over_time(rate(fraud_predictions_total[5m])[24h:5m])
+          ) / avg_over_time(rate(fraud_predictions_total[5m])[24h:5m]) * 100
+
+  - name: fraudguard.infrastructure.rules
+    rules:
+      # Infrastructure Health Rules
+      - record: fraudguard:pod_restart_rate
+        expr: |
+          rate(kube_pod_container_status_restarts_total{container="fraudguard-api"}[5m])
+
+      - record: fraudguard:pod_memory_pressure
+        expr: |
+          (
+            container_memory_working_set_bytes{container="fraudguard-api"} /
+            container_spec_memory_limit_bytes{container="fraudguard-api"}
+          ) > 0.8
+
+      - record: fraudguard:pod_cpu_throttling
+        expr: |
+          rate(container_cpu_cfs_throttled_seconds_total{container="fraudguard-api"}[5m]) > 0
+
+      - record: fraudguard:disk_usage_percent
+        expr: |
+          (
+            (node_filesystem_size_bytes{mountpoint="/"} - node_filesystem_free_bytes{mountpoint="/"}) /
+            node_filesystem_size_bytes{mountpoint="/"}
+          ) * 100

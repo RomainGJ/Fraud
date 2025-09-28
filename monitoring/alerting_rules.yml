@@ -1,0 +1,239 @@
+groups:
+- name: fraudguard.critical.alerts
+  rules:
+  - alert: APIDown
+    expr: up{job="fraudguard-api"} == 0
+    for: 1m
+    labels:
+      severity: critical
+      team: infrastructure
+    annotations:
+      summary: "FraudGuard API is down"
+      description: "FraudGuard API has been down for more than 1 minute"
+      runbook_url: "https://wiki.company.com/runbooks/fraudguard-api-down"
+      dashboard_url: "https://grafana.company.com/d/fraudguard"
+
+  - alert: HighErrorRate
+    expr: fraudguard:api_error_rate > 5
+    for: 5m
+    labels:
+      severity: critical
+      team: engineering
+    annotations:
+      summary: "High error rate detected"
+      description: "Error rate is {{ $value }}% for the last 5 minutes"
+      current_value: "{{ $value }}%"
+      threshold: "5%"
+
+  - alert: HighLatency
+    expr: fraudguard:prediction_latency_p95 > 1000
+    for: 3m
+    labels:
+      severity: warning
+      team: engineering
+    annotations:
+      summary: "High prediction latency detected"
+      description: "P95 latency is {{ $value }}ms for the last 3 minutes"
+      current_value: "{{ $value }}ms"
+      threshold: "1000ms"
+
+  - alert: LowAvailability
+    expr: fraudguard:sli_availability < 99
+    for: 2m
+    labels:
+      severity: critical
+      team: sre
+    annotations:
+      summary: "SLA breach: Low availability"
+      description: "Availability is {{ $value }}% for the last 2 minutes"
+      current_value: "{{ $value }}%"
+      sla_target: "99.5%"
+
+- name: fraudguard.business.alerts
+  rules:
+  - alert: HighFraudRate
+    expr: fraudguard:hourly_fraud_rate > 10
+    for: 10m
+    labels:
+      severity: warning
+      team: fraud-analysis
+    annotations:
+      summary: "Unusually high fraud rate detected"
+      description: "Fraud rate is {{ $value }}% for the last hour, significantly above normal"
+      current_value: "{{ $value }}%"
+      threshold: "10%"
+      recommended_action: "Review recent transactions and check for attack patterns"
+
+  - alert: LowTransactionVolume
+    expr: fraudguard:api_request_rate < 10
+    for: 15m
+    labels:
+      severity: warning
+      team: business
+    annotations:
+      summary: "Low transaction volume"
+      description: "Transaction rate is {{ $value }} requests/second for the last 15 minutes"
+      current_value: "{{ $value }} req/s"
+      normal_range: "50-200 req/s"
+
+  - alert: ZeroFraudDetected
+    expr: increase(fraud_predictions_total{outcome="fraud"}[4h]) == 0
+    for: 0m
+    labels:
+      severity: warning
+      team: fraud-analysis
+    annotations:
+      summary: "No fraud detected in 4 hours"
+      description: "No fraudulent transactions detected in the last 4 hours - possible model issue"
+      recommended_action: "Check model performance and validate recent transactions manually"
+
+- name: fraudguard.ml.alerts
+  rules:
+  - alert: ModelDrift
+    expr: fraudguard:prediction_volume_anomaly > 50
+    for: 30m
+    labels:
+      severity: warning
+      team: ml-engineering
+    annotations:
+      summary: "Model drift detected"
+      description: "Prediction volume anomaly of {{ $value }}% suggests possible model drift"
+      drift_score: "{{ $value }}%"
+      recommended_action: "Retrain model with recent data and validate performance"
+
+  - alert: ModelStale
+    expr: fraudguard:model_age_hours > 168  # 7 days
+    for: 0m
+    labels:
+      severity: warning
+      team: ml-engineering
+    annotations:
+      summary: "Model is stale"
+      description: "Current model is {{ $value }} hours old"
+      model_age: "{{ $value }} hours"
+      recommended_action: "Schedule model retraining"
+
+  - alert: LowModelConfidence
+    expr: fraudguard:model_confidence_avg < 0.7
+    for: 1h
+    labels:
+      severity: warning
+      team: ml-engineering
+    annotations:
+      summary: "Low average model confidence"
+      description: "Average model confidence is {{ $value }} for the last hour"
+      current_value: "{{ $value }}"
+      threshold: "0.7"
+
+  - alert: MLflowDown
+    expr: up{job="mlflow"} == 0
+    for: 5m
+    labels:
+      severity: warning
+      team: ml-engineering
+    annotations:
+      summary: "MLflow tracking server is down"
+      description: "MLflow has been unavailable for 5 minutes"
+
+- name: fraudguard.infrastructure.alerts
+  rules:
+  - alert: HighCPUUsage
+    expr: fraudguard:cpu_usage_percent > 80
+    for: 10m
+    labels:
+      severity: warning
+      team: infrastructure
+    annotations:
+      summary: "High CPU usage"
+      description: "CPU usage is {{ $value }}% for the last 10 minutes"
+      current_value: "{{ $value }}%"
+      threshold: "80%"
+
+  - alert: HighMemoryUsage
+    expr: fraudguard:memory_usage_percent > 85
+    for: 5m
+    labels:
+      severity: critical
+      team: infrastructure
+    annotations:
+      summary: "High memory usage"
+      description: "Memory usage is {{ $value }}% for the last 5 minutes"
+      current_value: "{{ $value }}%"
+      threshold: "85%"
+
+  - alert: PodRestartLoop
+    expr: rate(kube_pod_container_status_restarts_total{container="fraudguard-api"}[15m]) > 0
+    for: 0m
+    labels:
+      severity: warning
+      team: infrastructure
+    annotations:
+      summary: "Pod restart loop detected"
+      description: "FraudGuard API pod is restarting frequently"
+
+  - alert: PersistentVolumeFullness
+    expr: (node_filesystem_size_bytes{mountpoint="/"} - node_filesystem_free_bytes{mountpoint="/"}) / node_filesystem_size_bytes{mountpoint="/"} * 100 > 85
+    for: 5m
+    labels:
+      severity: warning
+      team: infrastructure
+    annotations:
+      summary: "Disk space running low"
+      description: "Disk usage is {{ $value }}% on {{ $labels.instance }}"
+
+- name: fraudguard.data.alerts
+  rules:
+  - alert: StaleData
+    expr: fraudguard:data_freshness_minutes > 240  # 4 hours
+    for: 0m
+    labels:
+      severity: warning
+      team: data-engineering
+    annotations:
+      summary: "Data is stale"
+      description: "Training data is {{ $value }} minutes old"
+      data_age: "{{ $value }} minutes"
+      threshold: "240 minutes"
+
+  - alert: AirflowDAGFailed
+    expr: airflow_dag_run_state{dag_id="fraud_detection_training_pipeline",state="failed"} > 0
+    for: 0m
+    labels:
+      severity: critical
+      team: data-engineering
+    annotations:
+      summary: "Airflow DAG failed"
+      description: "Fraud detection training pipeline failed"
+      dag_id: "{{ $labels.dag_id }}"
+
+  - alert: DataQualityIssue
+    expr: increase(data_quality_checks_failed_total[1h]) > 0
+    for: 0m
+    labels:
+      severity: warning
+      team: data-engineering
+    annotations:
+      summary: "Data quality check failed"
+      description: "{{ $value }} data quality checks failed in the last hour"
+
+- name: fraudguard.security.alerts
+  rules:
+  - alert: HighAuthFailureRate
+    expr: rate(api_requests_total{code="401"}[5m]) > 5
+    for: 2m
+    labels:
+      severity: warning
+      team: security
+    annotations:
+      summary: "High authentication failure rate"
+      description: "{{ $value }} authentication failures per second for the last 2 minutes"
+
+  - alert: SuspiciousTrafficPattern
+    expr: rate(api_requests_total[1m]) > 1000
+    for: 1m
+    labels:
+      severity: warning
+      team: security
+    annotations:
+      summary: "Suspicious traffic spike detected"
+      description: "Request rate of {{ $value }} req/s detected - possible DDoS"
